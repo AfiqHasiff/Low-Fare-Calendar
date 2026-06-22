@@ -1,22 +1,38 @@
+# ─────────────────────────────────────────────
+#  Spring Boot infrastructure
+# ─────────────────────────────────────────────
 spring:
   application:
     name: low-fare-calendar
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: localhost   # Redis host — matches the service name in docker-compose.yml
+      port: 6379        # Default Redis port
   cloud:
     gcp:
       pubsub:
+        # Set to true (along with lfc.pubsub.enabled) to activate the Pub/Sub listener.
+        # Requires the emulator running via docker-compose and scripts/init-pubsub.sh.
         enabled: false
 
 server:
   port: 8080
 
+# ─────────────────────────────────────────────
+#  Logging
+#  Levels: ERROR | WARN | INFO | DEBUG | TRACE
+# ─────────────────────────────────────────────
 logging:
   level:
+    # DEBUG shows per-request cache hit/miss lines in the console.
+    # Change to INFO to reduce log verbosity.
     com.simulated.lowfarecalendar: DEBUG
 
+# ─────────────────────────────────────────────
+#  Actuator / Metrics
+#  Prometheus endpoint: GET /actuator/prometheus
+#  Filter to custom LFC metrics: grep "^lfc_"
+# ─────────────────────────────────────────────
 management:
   endpoints:
     web:
@@ -27,78 +43,163 @@ management:
       prometheus:
         enabled: true
 
+# ─────────────────────────────────────────────
+#  Low Fare Calendar (lfc) configuration
+# ─────────────────────────────────────────────
 lfc:
+
+  # Per-request JSON trace files written to traces/ directory (newest-first sort).
+  # Each file captures: cache hits/misses, provider quotes, failures,
+  # currency conversion, and singleflight leader/follower counts.
+  # Disable in production to avoid disk I/O on every request.
   tracing:
     enabled: true
 
+  # ── Redis cache TTL settings ──────────────────
   cache:
-    hot-route-ttl-seconds: 600
-    standard-route-ttl-seconds: 300
-    fallback-ttl-seconds: 86400
-    jitter-min-pct: 0.10
-    jitter-max-pct: 0.30
+    # TTL for routes that exceed hot-threshold query count (seconds).
+    # Hot routes stay cached longer to absorb high traffic.
+    hot-route-ttl-seconds: 600          # 10 minutes
+
+    # TTL for routes below the hot-threshold (seconds).
+    standard-route-ttl-seconds: 300     # 5 minutes
+
+    # TTL for the fallback key — the last-known-good snapshot (seconds).
+    # Never actively deleted; serves stale data during provider outages.
+    fallback-ttl-seconds: 86400         # 24 hours
+
+    # Jitter range applied to each key's TTL to stagger cache expiry across dates.
+    # Prevents all 31 days expiring at the same instant (thundering herd on TTL).
+    # Actual TTL = baseTtl + baseTtl * random(jitter-min-pct, jitter-max-pct)
+    jitter-min-pct: 0.10                # minimum +10% jitter
+    jitter-max-pct: 0.30                # maximum +30% jitter
+
+    # Cache warmer skips a date if its remaining TTL exceeds this fraction of baseTtl.
+    # 0.50 = skip re-warm when more than 50% of TTL remains (still fresh enough).
     warmer-skip-threshold-pct: 0.50
+
+    # Redis key prefix version. Bump to "v2" to bust all existing keys on a deploy.
+    # Key format: lfc:{key-version}:{ORIGIN}:{DEST}:{YYYY-MM-DD}
     key-version: "v1"
 
+  # ── Hot route tracking (Redis ZSET) ──────────
   hot-routes:
+    # A route's ZSET score must exceed this to be considered "hot" (eligible for the longer TTL).
     hot-threshold: 100
-    top-k: 50
-    decay-min-score: 10
-    decay-interval-seconds: 3600
 
+    # Number of top routes the cache warmer pre-warms proactively.
+    top-k: 50
+
+    # Routes with a ZSET score below this are pruned by HotRouteDecayScheduler.
+    # Prevents the ZSET from growing unboundedly over time.
+    decay-min-score: 10
+
+    # How often HotRouteDecayScheduler runs its pruning pass (seconds).
+    decay-interval-seconds: 3600        # 1 hour
+
+  # ── Proactive cache warming ───────────────────
   warming:
-    interval-seconds: 300
+    # How often CacheWarmingScheduler re-warms near-expiry hot routes (seconds).
+    interval-seconds: 300               # Every 5 minutes
+
+    # How many days ahead of today the warmer covers per route.
     lookahead-days: 30
 
+  # ── Distributed lock (thundering herd protection) ──
   lock:
-    ttl-ms: 5000
-    poll-interval-ms: 50
-    poll-timeout-ms: 4000
+    # How long a Redis lock is held before auto-expiry (ms).
+    # Prevents a dead pod from holding the lock indefinitely.
+    ttl-ms: 5000                        # 5 seconds
 
+    # How often a follower polls Redis waiting for the leader to write the cache (ms).
+    poll-interval-ms: 50
+
+    # Maximum time a follower will poll before giving up and fetching itself (ms).
+    poll-timeout-ms: 4000               # 4 seconds
+
+  # ── Currency conversion rates (USD as the base currency) ──
   currency:
     rates:
-      usd-myr: 4.47
-      usd-thb: 33.50
-      usd-usd: 1.00
+      usd-myr: 4.47   # 1 USD = 4.47 MYR
+      usd-thb: 33.50  # 1 USD = 33.50 THB
+      usd-usd: 1.00   # Identity — USD to USD passthrough
 
+  # ── Mock provider simulation ──────────────────
+  # Each provider returns a random USD price within [price-min-usd, price-max-usd].
+  # Latency and error-rate simulate real-world provider unreliability.
   providers:
     provider-a:
-      price-min-usd: 100.00
-      price-max-usd: 500.00
-      latency-min-ms: 50
-      latency-max-ms: 300
-      error-rate: 0.05
-      enabled: true
+      price-min-usd: 100.00   # Lowest price this provider can quote (USD)
+      price-max-usd: 500.00   # Highest price this provider can quote (USD)
+      latency-min-ms: 50      # Minimum simulated network delay (ms)
+      latency-max-ms: 300     # Maximum simulated network delay (ms)
+      error-rate: 0.05        # Probability of throwing an exception per call (0.0 = never, 1.0 = always)
+      enabled: true           # Set to false to take this provider fully offline
+
     provider-b:
       price-min-usd: 120.00
       price-max-usd: 480.00
       latency-min-ms: 80
       latency-max-ms: 400
-      error-rate: 0.10
+      error-rate: 0.10        # 10% error rate — higher than A, lower than the circuit-breaker threshold
       enabled: true
+
     provider-c:
       price-min-usd: 90.00
       price-max-usd: 520.00
       latency-min-ms: 30
       latency-max-ms: 200
-      error-rate: 0.02
+      error-rate: 0.02        # 2% error rate — most reliable provider, lowest latency range
       enabled: true
 
+  # ── Resilience4j circuit breaker (applied per provider) ──
   circuit-breaker:
+    # Number of most-recent calls evaluated when calculating failure rate.
     sliding-window-size: 20
+
+    # Minimum calls required before the circuit breaker can open.
+    # Prevents tripping on the first few errors at startup.
     minimum-number-of-calls: 10
-    failure-rate-threshold: 50
-    slow-call-duration-threshold-ms: 1000
-    slow-call-rate-threshold: 50
-    wait-duration-in-open-state-ms: 5000
+
+    # Circuit opens when this percentage of calls in the window have failed.
+    failure-rate-threshold: 50          # 50%
+
+    # Calls that take longer than this threshold count as "slow" failures.
+    slow-call-duration-threshold-ms: 1000  # 1 second
+
+    # Circuit opens when this percentage of calls in the window are slow.
+    slow-call-rate-threshold: 50        # 50%
+
+    # How long the circuit stays OPEN before transitioning to HALF-OPEN (ms).
+    wait-duration-in-open-state-ms: 5000   # 5 seconds
+
+    # Number of test calls allowed through in HALF-OPEN state.
+    # Success → circuit closes. Failure → circuit reopens.
     permitted-calls-in-half-open: 3
 
+  # ── Google Cloud Pub/Sub ──────────────────────
   pubsub:
+    # Topic that receives "price-class-sold-out" events from the booking service.
     topic: "price-class-sold-out"
+
+    # Subscription the listener polls for incoming messages.
     subscription: "price-class-sold-out-sub"
+
+    # Address of the local Pub/Sub emulator (started via docker-compose up -d).
     emulator-host: "localhost:8085"
+
+    # Master switch for the Pub/Sub listener.
+    # Also set spring.cloud.gcp.pubsub.enabled=true above when enabling.
+    # Run scripts/init-pubsub.sh after docker-compose up to create the topic + subscription.
     enabled: false
 
+  # ── Observability tag granularity ────────────
   observability:
+    # Tag Micrometer metrics with origin + destination labels.
+    # Enables per-route cache hit/miss breakdown in Prometheus.
+    # Disable if cardinality is a concern (many routes = many label combinations).
     per-route-tags-enabled: true
+
+    # Tag metrics with individual calendar dates.
+    # Off by default — 31 date labels per route creates high Prometheus cardinality.
     per-date-tags-enabled: false
