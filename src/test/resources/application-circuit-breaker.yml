@@ -1,0 +1,33 @@
+lfc:
+  providers:
+    provider-a:
+      price-min-usd: 150.00
+      price-max-usd: 150.00
+      latency-min-ms: 0
+      latency-max-ms: 0
+      error-rate: 1.0
+      enabled: true
+    provider-b:
+      price-min-usd: 200.00
+      price-max-usd: 200.00
+      latency-min-ms: 0
+      latency-max-ms: 0
+      error-rate: 0.0
+      enabled: true
+    provider-c:
+      price-min-usd: 175.00
+      price-max-usd: 175.00
+      latency-min-ms: 0
+      latency-max-ms: 0
+      error-rate: 0.0
+      enabled: true
+  circuit-breaker:
+    sliding-window-size: 10
+    minimum-number-of-calls: 5
+    failure-rate-threshold: 50
+    slow-call-duration-threshold-ms: 1000
+    slow-call-rate-threshold: 50
+    wait-duration-in-open-state-ms: 60000
+    permitted-calls-in-half-open: 3
+  pubsub:
+    enabled: false

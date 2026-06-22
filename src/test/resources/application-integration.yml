@@ -1,0 +1,70 @@
+lfc:
+  cache:
+    hot-route-ttl-seconds: 60
+    standard-route-ttl-seconds: 30
+    fallback-ttl-seconds: 86400
+    jitter-min-pct: 0.0
+    jitter-max-pct: 0.0
+    warmer-skip-threshold-pct: 0.50
+    key-version: "v1"
+  hot-routes:
+    hot-threshold: 100
+    top-k: 50
+    decay-min-score: 10
+    decay-interval-seconds: 3600
+  warming:
+    interval-seconds: 99999
+    lookahead-days: 30
+  lock:
+    ttl-ms: 5000
+    poll-interval-ms: 50
+    poll-timeout-ms: 4000
+  currency:
+    rates:
+      usd-myr: 4.47
+      usd-thb: 33.50
+      usd-usd: 1.00
+  providers:
+    provider-a:
+      price-min-usd: 150.00
+      price-max-usd: 150.00
+      latency-min-ms: 0
+      latency-max-ms: 0
+      error-rate: 0.0
+      enabled: true
+    provider-b:
+      price-min-usd: 200.00
+      price-max-usd: 200.00
+      latency-min-ms: 0
+      latency-max-ms: 0
+      error-rate: 0.0
+      enabled: true
+    provider-c:
+      price-min-usd: 175.00
+      price-max-usd: 175.00
+      latency-min-ms: 0
+      latency-max-ms: 0
+      error-rate: 0.0
+      enabled: true
+  circuit-breaker:
+    sliding-window-size: 20
+    minimum-number-of-calls: 10
+    failure-rate-threshold: 50
+    slow-call-duration-threshold-ms: 1000
+    slow-call-rate-threshold: 50
+    wait-duration-in-open-state-ms: 5000
+    permitted-calls-in-half-open: 3
+  pubsub:
+    topic: "price-class-sold-out"
+    subscription: "price-class-sold-out-sub"
+    emulator-host: "localhost:8085"
+    enabled: false
+  observability:
+    per-route-tags-enabled: true
+    per-date-tags-enabled: false
+
+spring:
+  cloud:
+    gcp:
+      pubsub:
+        enabled: false

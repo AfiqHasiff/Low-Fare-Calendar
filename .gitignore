@@ -1,0 +1,39 @@
+# Maven build output
+target/
+*.class
+*.jar
+*.war
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Spring Boot
+spring-pid
+
+# Application runtime
+traces/
+
+# Environment / secrets
+.env
+*.env.local
+
+# Logs
+*.log
+logs/
+
+# Testcontainers
+.testcontainers.properties
+
+# SDD scratch files (keep progress.md, exclude generated briefs/reports)
+.superpowers/sdd/task-*-brief.md
+.superpowers/sdd/task-*-report.md
+
+# Claude
+.claude/
