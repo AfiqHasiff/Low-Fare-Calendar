@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 
 /**
  * Writes per-request trace files to the traces/ directory.
@@ -39,11 +40,15 @@ public class RequestTraceWriter {
                 Files.createDirectories(tracesDir);
             }
 
+            // Inverted epoch so lexicographic sort puts the newest file first.
+            long invertedEpoch = Long.MAX_VALUE - Instant.now().getEpochSecond();
+
             String shortId = trace.getRequestId() != null && trace.getRequestId().length() >= 8
                     ? trace.getRequestId().substring(0, 8)
                     : trace.getRequestId();
 
-            String fileName = String.format("%s-%s-%s-%s.json",
+            String fileName = String.format("%019d-%s-%s-%s-%s.json",
+                    invertedEpoch,
                     trace.getOrigin(),
                     trace.getDestination(),
                     trace.getMonth(),
