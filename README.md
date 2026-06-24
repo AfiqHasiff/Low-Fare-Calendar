@@ -187,7 +187,7 @@ CalendarController  (GET /api/v1/flights/calendar)
     │
     ▼
 CalendarService
-    ├── RedisCache (hot-route TTL: 600s / standard TTL: 300s)
+    ├── RedisCache (hot-route TTL: 240s / standard TTL: 600s)
     │       └── on miss ──► SingleflightCoordinator (distributed Redis lock)
     │                               │
     │                               ▼
