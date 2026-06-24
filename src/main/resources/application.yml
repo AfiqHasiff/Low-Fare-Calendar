@@ -13,7 +13,7 @@ spring:
       pubsub:
         # Set to true (along with lfc.pubsub.enabled) to activate the Pub/Sub listener.
         # Requires the emulator running via docker-compose and scripts/init-pubsub.sh.
-        enabled: false
+        enabled: true
 
 server:
   port: 8080
@@ -199,7 +199,7 @@ lfc:
     # Master switch for the Pub/Sub listener.
     # Also set spring.cloud.gcp.pubsub.enabled=true above when enabling.
     # Run scripts/init-pubsub.sh after docker-compose up to create the topic + subscription.
-    enabled: false
+    enabled: true
 
   # ── Observability tag granularity ────────────
   observability:
