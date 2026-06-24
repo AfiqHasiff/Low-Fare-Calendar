@@ -16,6 +16,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Periodically warms the fare cache for the top-K hot routes.
@@ -49,12 +50,20 @@ public class CacheWarmingScheduler {
 
     @Scheduled(fixedDelayString = "${lfc.warming.interval-seconds}000")
     public void warm() {
+        log.info("CacheWarmingScheduler starting warm cycle");
+        long cycleStart = System.currentTimeMillis();
+
         int topK = lfcProperties.getHotRoutes().getTopK();
         int lookaheadDays = lfcProperties.getWarming().getLookaheadDays();
         long baseTtlSeconds = lfcProperties.getCache().getHotRouteTtlSeconds();
         double skipThreshold = lfcProperties.getCache().getWarmerSkipThresholdPct();
 
         List<String> topRoutes = hotRouteTracker.getTopK(topK);
+        log.info("CacheWarmingScheduler found {} hot routes to evaluate (topK={})", topRoutes.size(), topK);
+
+        AtomicInteger warmed = new AtomicInteger();
+        AtomicInteger skippedFresh = new AtomicInteger();
+        AtomicInteger skippedLocked = new AtomicInteger();
 
         for (String routeToken : topRoutes) {
             // routeToken format: "ORIGIN:DEST:YYYY-MM"
@@ -86,28 +95,35 @@ public class CacheWarmingScheduler {
 
                 if (remainingTtl != null && remainingTtl > 0
                         && remainingTtl > baseTtlSeconds * skipThreshold) {
-                    log.trace("Skipping warm for {}/{}/{} remainingTtl={}s", origin, destination, date, remainingTtl);
+                    log.trace("Skipping warm for {}/{}/{} remainingTtl={}s (still fresh)", origin, destination, date, remainingTtl);
+                    skippedFresh.incrementAndGet();
                     continue;
                 }
 
                 final LocalDate warmDate = date;
                 Optional<String> lockToken = cacheLockService.tryAcquire(origin, destination, warmDate);
                 if (lockToken.isEmpty()) {
-                    log.trace("Skipping warm for {}/{}/{} — another pod holds the lock", origin, destination, warmDate);
+                    log.debug("Skipping warm for {}/{}/{} — another pod holds the lock", origin, destination, warmDate);
+                    skippedLocked.incrementAndGet();
                     continue;
                 }
 
                 try {
                     FlightQuery query = new FlightQuery(origin, destination, warmDate);
+                    log.debug("Warming {}/{}/{} remainingTtl={}s", origin, destination, warmDate, remainingTtl);
                     Optional<CachedFareEntry> result = providerAggregationService.aggregate(query);
                     result.ifPresent(entry -> {
-                        log.debug("Warming cache for {}/{}/{}", origin, destination, warmDate);
                         fareCacheService.set(origin, destination, warmDate, entry);
+                        warmed.incrementAndGet();
                     });
                 } finally {
                     cacheLockService.release(origin, destination, warmDate, lockToken.get());
                 }
             }
         }
+
+        log.info("CacheWarmingScheduler warm cycle complete in {}ms — warmed={} skippedFresh={} skippedLocked={}",
+                System.currentTimeMillis() - cycleStart,
+                warmed.get(), skippedFresh.get(), skippedLocked.get());
     }
 }
