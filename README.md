@@ -212,7 +212,6 @@ PubSubSubscriber ──► SoldOutEvent ──► Cache Invalidation + Re-fetch
 ## Configuration
 
 All tuneable parameters live in `src/main/resources/application.yml` under the `lfc.*` prefix.
-See the design spec at `docs/superpowers/specs/2026-06-20-low-fare-calendar-design.md` section 8 for a full simulation guide.
 
 Key parameters:
 
