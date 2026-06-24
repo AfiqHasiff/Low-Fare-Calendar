@@ -10,10 +10,15 @@ spring:
       port: 6379        # Default Redis port
   cloud:
     gcp:
+      # Project ID required by Spring Cloud GCP autoconfiguration even when using the emulator.
+      # "local-project" matches the project used in docker-compose and init-pubsub.sh.
+      project-id: local-project
       pubsub:
         # Set to true (along with lfc.pubsub.enabled) to activate the Pub/Sub listener.
         # Requires the emulator running via docker-compose and scripts/init-pubsub.sh.
-        enabled: true
+        enabled: false
+        # Point to the local emulator so no real GCP credentials are required.
+        emulator-host: localhost:8085
 
 server:
   port: 8080
@@ -91,7 +96,7 @@ lfc:
   # ── Hot route tracking (Redis ZSET) ──────────
   hot-routes:
     # A route's ZSET score must exceed this to be considered "hot" (eligible for the longer TTL).
-    hot-threshold: 100
+    hot-threshold: 5
 
     # Number of top routes the cache warmer pre-warms proactively.
     top-k: 50
