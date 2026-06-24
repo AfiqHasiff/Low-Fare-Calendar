@@ -118,6 +118,13 @@ lfc:
     # How many days ahead of today the warmer covers per route.
     lookahead-days: 120
 
+    # Pre-defined popular routes to seed into the hot-routes ZSET on startup.
+    # Format: "ORIGIN:DEST". Seeded with the hot-threshold score so the warmer
+    # picks them up immediately on a fresh start. Skipped if the route already
+    # has an organic score (won't overwrite real traffic data).
+    seed-routes:
+      - "KUL:SIN"
+
   # ── Distributed lock (thundering herd protection) ──
   lock:
     # How long a Redis lock is held before auto-expiry (ms).

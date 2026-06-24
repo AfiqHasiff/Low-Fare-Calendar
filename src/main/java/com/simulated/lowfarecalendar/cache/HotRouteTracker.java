@@ -52,6 +52,15 @@ public class HotRouteTracker {
     }
 
     /**
+     * Seeds a route+month with the given score only if it has no existing score.
+     * Used by HotRouteSeedRunner at startup to pre-populate known popular routes.
+     */
+    public void seed(String origin, String dest, YearMonth month, long score) {
+        String member = origin.toUpperCase() + ":" + dest.toUpperCase() + ":" + month;
+        redisTemplate.opsForZSet().addIfAbsent(ZSET_KEY, member, score);
+    }
+
+    /**
      * Removes all members whose score is strictly below minScore.
      */
     public void pruneBelow(double minScore) {

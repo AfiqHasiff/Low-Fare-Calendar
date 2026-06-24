@@ -221,11 +221,20 @@ public class LfcProperties {
         @Min(1)
         private int lookaheadDays = 30;
 
+        // Pre-defined routes to seed into the hot-routes ZSET on startup.
+        // Format: "ORIGIN:DEST" e.g. "KUL:SIN". Seeded with hot-threshold score
+        // so the warmer picks them up immediately on a fresh start.
+        // Only applied if the route has no existing score (won't overwrite organic traffic).
+        private java.util.List<String> seedRoutes = new java.util.ArrayList<>();
+
         public long getIntervalSeconds() { return intervalSeconds; }
         public void setIntervalSeconds(long v) { this.intervalSeconds = v; }
 
         public int getLookaheadDays() { return lookaheadDays; }
         public void setLookaheadDays(int v) { this.lookaheadDays = v; }
+
+        public java.util.List<String> getSeedRoutes() { return seedRoutes; }
+        public void setSeedRoutes(java.util.List<String> v) { this.seedRoutes = v; }
     }
 
     @Data
