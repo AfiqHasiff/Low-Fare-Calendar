@@ -143,6 +143,12 @@ ZSCORE hot_routes KUL:SIN:2026-07
 KEYS lock:lfc:*
 ```
 
+**Find near-expiry hot route keys for a given month (remaining TTL < 50% of hot TTL = < 120s):**
+
+```bash
+EVAL "local keys = redis.call('KEYS', 'lfc:v1:*:*:2026-07-*') local result = {} for _, k in ipairs(keys) do if not string.find(k, 'fallback') then local ttl = redis.call('TTL', k) if ttl > 0 and ttl < 120 then table.insert(result, k .. ' TTL=' .. ttl .. 's') end end end return result" 0
+```
+
 **Manually set TTL on a specific key:**
 
 ```bash

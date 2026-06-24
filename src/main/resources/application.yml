@@ -116,7 +116,7 @@ lfc:
     interval-seconds: 120               # Every 2 minutes
 
     # How many days ahead of today the warmer covers per route.
-    lookahead-days: 30
+    lookahead-days: 120
 
   # ── Distributed lock (thundering herd protection) ──
   lock:
