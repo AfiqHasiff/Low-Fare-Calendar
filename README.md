@@ -143,7 +143,13 @@ ZSCORE hot_routes KUL:SIN:2026-07
 KEYS lock:lfc:*
 ```
 
-**Flush all cache data (full reset — use with caution):**
+**Manually set TTL on a specific key:**
+
+```bash
+EXPIRE lfc:v1:KUL:SIN:2026-07-01 60
+```
+
+**Flush all cache data (full reset):**
 
 ```bash
 FLUSHALL
