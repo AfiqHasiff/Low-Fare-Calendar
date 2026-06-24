@@ -48,7 +48,7 @@ The API will be available at `http://localhost:8080`.
 ### Get low fare calendar
 
 ```bash
-curl "http://localhost:8080/api/v1/flights/calendar?origin=KUL&destination=SIN&month=2024-07&currency=MYR"
+curl "http://localhost:8080/api/v1/flights/calendar?origin=KUL&destination=SIN&month=2026-07&currency=MYR"
 ```
 
 Returns a 31-day calendar with the lowest available price per day, converted to MYR.
@@ -56,10 +56,10 @@ Returns a 31-day calendar with the lowest available price per day, converted to 
 ### Publish a sold-out event
 
 ```bash
-bash scripts/publish-sold-out.sh KUL SIN 2024-07-15
+bash scripts/publish-sold-out.sh KUL SIN 2026-07-15
 ```
 
-Triggers async cache invalidation and re-fetch for KUL→SIN on 2024-07-15.
+Triggers async cache invalidation and re-fetch for KUL→SIN on 2026-07-15.
 
 ### Trigger cache warm manually
 
@@ -92,6 +92,62 @@ curl http://localhost:8080/actuator/prometheus | grep lfc
 ```
 
 Shows all `lfc.*` metrics including cache hits/misses, provider call durations, and circuit breaker states.
+
+### Inspect Redis cache
+
+All commands run inside the Redis container. Start a Redis CLI session:
+
+```bash
+docker exec -it $(docker ps -qf "name=redis") redis-cli
+```
+
+**View all cached fare entries (primary keys):**
+
+```bash
+KEYS lfc:v1:*
+```
+
+**View all fallback entries:**
+
+```bash
+KEYS lfc:v1:fallback:*
+```
+
+**Read a specific cached fare entry:**
+
+```bash
+GET lfc:v1:KUL:SIN:2026-07-01
+```
+
+**Check remaining TTL on a key (seconds):**
+
+```bash
+TTL lfc:v1:KUL:SIN:2026-07-01
+```
+
+**View all hot routes and their scores (highest first):**
+
+```bash
+ZREVRANGEBYSCORE hot_routes +inf -inf WITHSCORES
+```
+
+**Check if a specific route is hot (score ≥ 100 = hot):**
+
+```bash
+ZSCORE hot_routes KUL:SIN:2026-07
+```
+
+**View all active distributed locks:**
+
+```bash
+KEYS lock:lfc:*
+```
+
+**Flush all cache data (full reset — use with caution):**
+
+```bash
+FLUSHALL
+```
 
 ---
 
