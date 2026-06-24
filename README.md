@@ -155,6 +155,12 @@ EVAL "local keys = redis.call('KEYS', 'lfc:v1:*:*:2026-07-*') local result = {} 
 EXPIRE lfc:v1:KUL:SIN:2026-07-01 60
 ```
 
+**Manually set TTL on all keys matching a pattern (batch):**
+
+```bash
+EVAL "for _, k in ipairs(redis.call('KEYS', ARGV[1])) do redis.call('EXPIRE', k, ARGV[2]) end" 0 "lfc:v1:KUL:SIN:2026-07-*" 60
+```
+
 **Flush all cache data (full reset):**
 
 ```bash

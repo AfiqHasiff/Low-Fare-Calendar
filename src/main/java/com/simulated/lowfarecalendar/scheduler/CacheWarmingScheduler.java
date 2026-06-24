@@ -49,6 +49,19 @@ public class CacheWarmingScheduler {
     }
 
     @Scheduled(fixedDelayString = "${lfc.warming.interval-seconds}000")
+    public void warmScheduled() {
+        for (int i = 10; i >= 1; i--) {
+            log.info("CacheWarmingScheduler scheduled trigger in {}s...", i);
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        warm();
+    }
+
     public void warm() {
         log.info("CacheWarmingScheduler starting warm cycle");
         long cycleStart = System.currentTimeMillis();
