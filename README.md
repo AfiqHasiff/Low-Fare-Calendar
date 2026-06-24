@@ -212,10 +212,10 @@ Key parameters:
 
 | Property | Default | Effect |
 | --- | --- | --- |
-| `lfc.cache.hot-route-ttl-seconds` | 600 | TTL for frequently queried routes |
-| `lfc.cache.standard-route-ttl-seconds` | 300 | TTL for standard routes |
+| `lfc.cache.hot-route-ttl-seconds` | 240 | TTL for hot routes (4 min) — shorter for freshness, warmer refreshes every 2 min |
+| `lfc.cache.standard-route-ttl-seconds` | 600 | TTL for standard routes (10 min) |
 | `lfc.providers.provider-a.error-rate` | 0.05 | Probability of provider-a returning an error |
-| `lfc.pubsub.enabled` | true | Enable/disable async sold-out event processing |
+| `lfc.pubsub.enabled` | false | Enable/disable async sold-out event processing |
 
 To run without Pub/Sub (Redis only), set in `application.yml`:
 
