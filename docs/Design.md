@@ -407,6 +407,12 @@ CalendarSvc   ProviderAggregationService   CircuitBreaker   ProviderA   Redis
 6. Build and return the [`CalendarResponse`](../src/main/java/com/simulated/lowfarecalendar/model/CalendarResponse.java)
 
 **Non-obvious — why the miss loop is sequential, not parallel:** Steps 3–4 process missed dates in a `for` loop ([`CalendarService.java#L112`](../src/main/java/com/simulated/lowfarecalendar/service/CalendarService.java#L112)), one at a time. Running them in parallel would spawn 31 concurrent singleflight attempts, each of which fans out to 3 providers — 93 simultaneous outbound connections per request during a cold start. The parallelism lives *inside* `resolveMissForDate()` where the 3 providers are called concurrently. The outer loop stays sequential to bound the blast radius.
+---
+
+### [AdminController](../src/main/java/com/simulated/lowfarecalendar/controller/AdminController.java)
+
+**Package:** `controller`  
+**Role:** Admin REST controller exposing `POST /admin/cache/warm` to manually trigger the cache warmer immediately. Calls `CacheWarmingScheduler.warm()` directly.
 
 ---
 
@@ -595,7 +601,7 @@ Without the token: Pod 1 acquires the lock, then crashes. The lock auto-expires 
 **Role:** Tracks query frequency per route+month using a Redis Sorted Set (`ZINCRBY`). Routes with a score above `hot-threshold` receive a **shorter TTL** for more frequent price refreshes. Used by `CacheWarmingScheduler` to decide which routes to pre-warm.  
 **ZSET key:** `hot_routes`  
 **Member format:** `ORIGIN:DEST:YYYY-MM`  
-**Key methods:** [`increment()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L28), [`isHot()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L36), [`getTopK()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L46), [`pruneBelow()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L57)
+**Key methods:** [`increment()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L28), [`isHot()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L36), [`getTopK()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L46), [`pruneBelow()`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L66)
 
 **The problem it solves:** Not all routes are equal. KUL→SIN might be searched and booked thousands of times a day; an obscure regional route might be searched once a week. Hot routes need fresh prices — a user on a high-traffic route is more likely to proceed to checkout, making a stale price (one that has since sold out or changed) directly harmful. Standard routes can tolerate older cached data because the booking risk is lower. Tracking query frequency lets the system apply the right TTL and warming cadence to each route automatically.
 
@@ -652,11 +658,18 @@ The TTL is not stored anywhere — it is re-evaluated fresh every time [`FareCac
 
 ---
 
+### [HotRouteSeedRunner](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteSeedRunner.java)
+
+**Package:** `cache`  
+**Role:** `ApplicationRunner` that seeds pre-defined popular routes (`lfc.warming.seed-routes`) into the `hot_routes` ZSET at startup using `ZADD NX`, so the cache warmer has routes to work with immediately without waiting for organic traffic.
+
+---
+
 ### [CacheWarmingScheduler](../src/main/java/com/simulated/lowfarecalendar/scheduler/CacheWarmingScheduler.java)
 
 **Package:** `scheduler`  
 **Role:** Background scheduler (every 2 min). Fetches the top-50 routes from the ZSET, iterates over the next 30 days for each route, and re-fetches from providers for dates whose remaining TTL is below 50% of the base TTL (stale-while-revalidate). This prevents cache expiry from ever being the reason for a cold miss on popular routes.  
-**Key method:** [`warm()`](../src/main/java/com/simulated/lowfarecalendar/scheduler/CacheWarmingScheduler.java#L47)
+**Key method:** [`warm()`](../src/main/java/com/simulated/lowfarecalendar/scheduler/CacheWarmingScheduler.java#L65)
 
 **Where it runs:** Inside the same Spring Boot JVM process as the HTTP server — not a separate service. [`@EnableScheduling`](../src/main/java/com/simulated/lowfarecalendar/LowFareCalendarApplication.java#L11) on `LowFareCalendarApplication` activates Spring's scheduler at startup. The 2-minute timer ticks automatically alongside live request handling. No external cron job or deployment is involved.
 
@@ -698,7 +711,7 @@ The lock is released in a `finally` block so it is always freed even if the prov
 
 **How `decay-min-score` works — step by step:**
 
-`decay-min-score` (configured as `10`) is a floor threshold. The scheduler calls [`pruneBelow(10)`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L57), which executes:
+`decay-min-score` (configured as `10`) is a floor threshold. The scheduler calls [`pruneBelow(10)`](../src/main/java/com/simulated/lowfarecalendar/cache/HotRouteTracker.java#L66), which executes:
 
 ```text
 ZREMRANGEBYSCORE hot_routes -inf 9
