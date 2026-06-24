@@ -412,7 +412,9 @@ CalendarSvc   ProviderAggregationService   CircuitBreaker   ProviderA   Redis
 ### [AdminController](../src/main/java/com/simulated/lowfarecalendar/controller/AdminController.java)
 
 **Package:** `controller`  
-**Role:** Admin REST controller exposing `POST /admin/cache/warm` to manually trigger the cache warmer immediately. Calls `CacheWarmingScheduler.warm()` directly.
+**Role:** Admin REST controller exposing two manual trigger endpoints. `POST /admin/cache/warm` calls `CacheWarmingScheduler.warm()` directly. `POST /admin/hot-routes/decay` calls `HotRouteDecayScheduler.decay()` directly. Both bypass the scheduled countdown so they execute immediately, useful for testing without waiting for the timed intervals.  
+**Key methods:** [`triggerCacheWarm()`](../src/main/java/com/simulated/lowfarecalendar/controller/AdminController.java#L27), [`triggerHotRouteDecay()`](../src/main/java/com/simulated/lowfarecalendar/controller/AdminController.java#L34)  
+**Trigger scripts:** `scripts/trigger-cache-warm.sh`, `scripts/trigger-hot-route-decay.sh`
 
 ---
 

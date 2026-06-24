@@ -69,6 +69,14 @@ bash scripts/trigger-cache-warm.sh
 
 Forces the cache warmer to run immediately (calls `POST /admin/cache/warm`). Useful for testing warm-cycle behaviour without waiting for the 2-minute scheduled interval. The app must be running.
 
+### Trigger hot-route decay manually
+
+```bash
+bash scripts/trigger-hot-route-decay.sh
+```
+
+Forces the hot-route decay scheduler to run immediately (calls `POST /admin/hot-routes/decay`). Useful for testing ZSET pruning without waiting for the 1-hour scheduled interval. The app must be running.
+
 ### Run the load test
 
 ```bash

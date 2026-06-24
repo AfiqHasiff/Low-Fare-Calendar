@@ -99,11 +99,11 @@ lfc:
     hot-threshold: 5
 
     # Number of top routes the cache warmer pre-warms proactively.
-    top-k: 50
+    top-k: 10
 
     # Routes with a ZSET score below this are pruned by HotRouteDecayScheduler.
     # Prevents the ZSET from growing unboundedly over time.
-    decay-min-score: 10
+    decay-min-score: 2
 
     # How often HotRouteDecayScheduler runs its pruning pass (seconds).
     decay-interval-seconds: 3600        # 1 hour
