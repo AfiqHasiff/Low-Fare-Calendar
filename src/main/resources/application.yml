@@ -58,11 +58,17 @@ lfc:
   # ── Redis cache TTL settings ──────────────────
   cache:
     # TTL for routes that exceed hot-threshold query count (seconds).
-    # Hot routes stay cached longer to absorb high traffic.
-    hot-route-ttl-seconds: 600          # 10 minutes
+    # Hot routes get a SHORTER TTL so prices are refreshed more frequently —
+    # high-traffic routes are more likely to sell out, making stale prices harmful.
+    # Must be > warming.interval-seconds so the warmer always refreshes before expiry.
+    # At 240s TTL + 50% skip threshold, the warmer at T=120s sees remainingTtl ~144-192s
+    # (above threshold → skip), then at T=240s sees ~24-72s (below → refresh). Safe.
+    hot-route-ttl-seconds: 240          # 4 minutes
 
     # TTL for routes below the hot-threshold (seconds).
-    standard-route-ttl-seconds: 300     # 5 minutes
+    # Standard routes have lower search/booking frequency so a longer TTL is acceptable —
+    # less risk of a stale price being acted on, and fewer unnecessary provider calls.
+    standard-route-ttl-seconds: 600     # 10 minutes
 
     # TTL for the fallback key — the last-known-good snapshot (seconds).
     # Never actively deleted; serves stale data during provider outages.
@@ -100,7 +106,9 @@ lfc:
   # ── Proactive cache warming ───────────────────
   warming:
     # How often CacheWarmingScheduler re-warms near-expiry hot routes (seconds).
-    interval-seconds: 300               # Every 5 minutes
+    # Must be <= hot-route-ttl-seconds / 2 so the warmer fires at least once
+    # within the second half of a hot key's TTL window and refreshes it before expiry.
+    interval-seconds: 120               # Every 2 minutes
 
     # How many days ahead of today the warmer covers per route.
     lookahead-days: 30

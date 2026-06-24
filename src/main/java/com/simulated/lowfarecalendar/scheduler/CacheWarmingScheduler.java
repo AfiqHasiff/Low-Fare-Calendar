@@ -1,5 +1,6 @@
 package com.simulated.lowfarecalendar.scheduler;
 
+import com.simulated.lowfarecalendar.cache.CacheLockService;
 import com.simulated.lowfarecalendar.cache.FareCacheService;
 import com.simulated.lowfarecalendar.cache.HotRouteTracker;
 import com.simulated.lowfarecalendar.config.LfcProperties;
@@ -31,15 +32,18 @@ public class CacheWarmingScheduler {
     private final HotRouteTracker hotRouteTracker;
     private final FareCacheService fareCacheService;
     private final ProviderAggregationService providerAggregationService;
+    private final CacheLockService cacheLockService;
     private final LfcProperties lfcProperties;
 
     public CacheWarmingScheduler(HotRouteTracker hotRouteTracker,
                                  FareCacheService fareCacheService,
                                  ProviderAggregationService providerAggregationService,
+                                 CacheLockService cacheLockService,
                                  LfcProperties lfcProperties) {
         this.hotRouteTracker = hotRouteTracker;
         this.fareCacheService = fareCacheService;
         this.providerAggregationService = providerAggregationService;
+        this.cacheLockService = cacheLockService;
         this.lfcProperties = lfcProperties;
     }
 
@@ -87,13 +91,22 @@ public class CacheWarmingScheduler {
                 }
 
                 final LocalDate warmDate = date;
-                FlightQuery query = new FlightQuery(origin, destination, warmDate);
+                Optional<String> lockToken = cacheLockService.tryAcquire(origin, destination, warmDate);
+                if (lockToken.isEmpty()) {
+                    log.trace("Skipping warm for {}/{}/{} — another pod holds the lock", origin, destination, warmDate);
+                    continue;
+                }
 
-                Optional<CachedFareEntry> result = providerAggregationService.aggregate(query);
-                result.ifPresent(entry -> {
-                    log.debug("Warming cache for {}/{}/{}", origin, destination, warmDate);
-                    fareCacheService.set(origin, destination, warmDate, entry);
-                });
+                try {
+                    FlightQuery query = new FlightQuery(origin, destination, warmDate);
+                    Optional<CachedFareEntry> result = providerAggregationService.aggregate(query);
+                    result.ifPresent(entry -> {
+                        log.debug("Warming cache for {}/{}/{}", origin, destination, warmDate);
+                        fareCacheService.set(origin, destination, warmDate, entry);
+                    });
+                } finally {
+                    cacheLockService.release(origin, destination, warmDate, lockToken.get());
+                }
             }
         }
     }
