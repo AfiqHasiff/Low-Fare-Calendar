@@ -152,6 +152,24 @@ Only the thread that passes *both* gates reaches `ProviderAggregationService`. T
 
 **Where the schedulers run:** [`CacheWarmingScheduler`](../src/main/java/com/simulated/lowfarecalendar/scheduler/CacheWarmingScheduler.java) and [`HotRouteDecayScheduler`](../src/main/java/com/simulated/lowfarecalendar/scheduler/HotRouteDecayScheduler.java) are not separate services, separate JARs, or separate containers. They are Spring `@Component` beans running inside the **same JVM process** as the HTTP server. [`@EnableScheduling`](../src/main/java/com/simulated/lowfarecalendar/LowFareCalendarApplication.java#L11) on [`LowFareCalendarApplication`](../src/main/java/com/simulated/lowfarecalendar/LowFareCalendarApplication.java) activates Spring's internal scheduler thread pool at startup. The timers tick silently in the background while the same process is simultaneously handling HTTP requests and Pub/Sub events. There is exactly one process: the Spring Boot app. You do not need to deploy or restart anything separately to get scheduling to work — it starts automatically when the app starts.
 
+**What's inside the single LFC process:**
+
+| Component | Type | What it does |
+| --- | --- | --- |
+| `CalendarController` | HTTP layer | Handles `GET /api/v1/flights/calendar` |
+| `AdminController` | HTTP layer | Manual trigger endpoints (`POST /admin/...`) |
+| `CalendarService` | Service | Orchestrates the read path |
+| `ProviderAggregationService` | Service | Fans out to providers in parallel |
+| `FareCacheService` | Cache | All Redis read/write operations |
+| `InProcessSingleflight` | Cache | In-JVM thundering herd gate |
+| `CacheLockService` | Cache | Cross-pod Redis lock |
+| `HotRouteTracker` | Cache | ZSET score tracking per route |
+| `HotRouteSeedRunner` | Startup | Seeds pre-defined routes into ZSET at startup |
+| `CacheWarmingScheduler` | `@Scheduled` | Every 2 min — pre-warms near-expiry routes |
+| `HotRouteDecayScheduler` | `@Scheduled` | Every 1 hr — prunes low-score ZSET entries |
+| `SoldOutEventListener` | Pub/Sub consumer | Evicts + re-fetches on sold-out events |
+| `CurrencyConverterRegistry` + converters | Utility | In-memory currency conversion |
+
 ---
 
 ## 3. Sequence Diagrams
