@@ -12,8 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CachedFareEntryTest {
 
     @Test
-    @DisplayName("builder defaults: stale=false, currency=USD")
-    void builderDefaults_staleAndCurrency() {
+    @DisplayName("builder defaults: currency=USD, winningProvider=null when not set")
+    void builderDefaults_currencyAndWinningProvider() {
         CachedFareEntry entry = CachedFareEntry.builder()
                 .origin("KUL")
                 .destination("SIN")
@@ -21,35 +21,36 @@ class CachedFareEntryTest {
                 .lowestPrice(new BigDecimal("199.00"))
                 .updatedAt(Instant.parse("2024-07-15T10:25:00Z"))
                 .providerCount(3)
-                .respondingProviders(List.of("PROVIDER_A", "PROVIDER_C"))
+                .respondingProviders(List.of("providerA", "providerC"))
+                .winningProvider("providerC")
                 .build();
-
-        assertThat(entry.isStale())
-                .as("stale should default to false when not explicitly set")
-                .isFalse();
 
         assertThat(entry.getCurrency())
                 .as("currency should default to USD when not explicitly set")
                 .isEqualTo("USD");
+
+        assertThat(entry.getWinningProvider())
+                .as("winningProvider should be the provider whose price was selected")
+                .isEqualTo("providerC");
     }
 
     @Test
-    @DisplayName("builder: explicit stale=true is preserved")
-    void builderExplicitStale_preserved() {
+    @DisplayName("builder: winningProvider is preserved")
+    void builderWinningProvider_preserved() {
         CachedFareEntry entry = CachedFareEntry.builder()
                 .origin("KUL")
                 .destination("SIN")
                 .date("2024-07-15")
-                .lowestPrice(new BigDecimal("199.00"))
+                .lowestPrice(new BigDecimal("120.00"))
                 .updatedAt(Instant.parse("2024-07-15T10:25:00Z"))
-                .providerCount(0)
-                .respondingProviders(List.of())
-                .stale(true)
+                .providerCount(3)
+                .respondingProviders(List.of("providerA", "providerB", "providerC"))
+                .winningProvider("providerC")
                 .build();
 
-        assertThat(entry.isStale())
-                .as("stale=true explicitly set should be preserved")
-                .isTrue();
+        assertThat(entry.getWinningProvider())
+                .as("winningProvider should identify which provider had the lowest price")
+                .isEqualTo("providerC");
     }
 
     @Test

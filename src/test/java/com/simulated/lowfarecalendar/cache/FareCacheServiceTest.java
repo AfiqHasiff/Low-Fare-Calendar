@@ -68,7 +68,7 @@ class FareCacheServiceTest {
                 .updatedAt(Instant.parse("2024-07-15T10:00:00Z"))
                 .providerCount(3)
                 .respondingProviders(List.of("providerA", "providerB", "providerC"))
-                .stale(false)
+                .winningProvider("providerC")
                 .build();
     }
 
@@ -80,7 +80,7 @@ class FareCacheServiceTest {
         assertThat(result).isPresent();
         assertThat(result.get().getLowestPrice()).isEqualByComparingTo(new BigDecimal("199.00"));
         assertThat(result.get().getCurrency()).isEqualTo("USD");
-        assertThat(result.get().isStale()).isFalse();
+        assertThat(result.get().getWinningProvider()).isEqualTo("providerC");
     }
 
     @Test

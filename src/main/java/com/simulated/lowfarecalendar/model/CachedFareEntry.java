@@ -33,14 +33,14 @@ public class CachedFareEntry {
 
     private int providerCount;
     private List<String> respondingProviders;
-    private boolean stale = false;
+    private String winningProvider;
 
     public CachedFareEntry() {
     }
 
     public CachedFareEntry(String origin, String destination, String date, BigDecimal lowestPrice,
                            String currency, Instant updatedAt, int providerCount,
-                           List<String> respondingProviders, boolean stale) {
+                           List<String> respondingProviders, String winningProvider) {
         this.origin = origin;
         this.destination = destination;
         this.date = date;
@@ -49,7 +49,7 @@ public class CachedFareEntry {
         this.updatedAt = updatedAt;
         this.providerCount = providerCount;
         this.respondingProviders = respondingProviders;
-        this.stale = stale;
+        this.winningProvider = winningProvider;
     }
 
     public static Builder builder() {
@@ -66,7 +66,7 @@ public class CachedFareEntry {
                 .updatedAt(this.updatedAt)
                 .providerCount(this.providerCount)
                 .respondingProviders(this.respondingProviders)
-                .stale(this.stale);
+                .winningProvider(this.winningProvider);
     }
 
     public static class Builder {
@@ -78,7 +78,7 @@ public class CachedFareEntry {
         private Instant updatedAt;
         private int providerCount;
         private List<String> respondingProviders;
-        private boolean stale = false;
+        private String winningProvider;
 
         public Builder origin(String origin) {
             this.origin = origin;
@@ -120,14 +120,14 @@ public class CachedFareEntry {
             return this;
         }
 
-        public Builder stale(boolean stale) {
-            this.stale = stale;
+        public Builder winningProvider(String winningProvider) {
+            this.winningProvider = winningProvider;
             return this;
         }
 
         public CachedFareEntry build() {
             return new CachedFareEntry(origin, destination, date, lowestPrice, currency,
-                    updatedAt, providerCount, respondingProviders, stale);
+                    updatedAt, providerCount, respondingProviders, winningProvider);
         }
     }
 
@@ -195,11 +195,11 @@ public class CachedFareEntry {
         this.respondingProviders = respondingProviders;
     }
 
-    public boolean isStale() {
-        return stale;
+    public String getWinningProvider() {
+        return winningProvider;
     }
 
-    public void setStale(boolean stale) {
-        this.stale = stale;
+    public void setWinningProvider(String winningProvider) {
+        this.winningProvider = winningProvider;
     }
 }

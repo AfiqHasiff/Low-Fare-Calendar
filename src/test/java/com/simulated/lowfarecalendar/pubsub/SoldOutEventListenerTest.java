@@ -106,7 +106,9 @@ class SoldOutEventListenerTest {
                 .lowestPrice(new BigDecimal("215.00"))
                 .currency("USD")
                 .updatedAt(Instant.now())
-                .stale(false)
+                .respondingProviders(List.of("providerA"))
+                .winningProvider("providerA")
+                .providerCount(1)
                 .build();
 
         when(providerAggregationService.aggregate(any(FlightQuery.class)))

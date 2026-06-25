@@ -68,7 +68,8 @@ class IdempotencyIntegrationTest {
                 .currency("USD")
                 .updatedAt(Instant.parse("2024-07-15T10:00:30Z"))
                 .respondingProviders(List.of("providerA", "providerB", "providerC"))
-                .stale(false)
+                .winningProvider("providerC")
+                .providerCount(3)
                 .build();
 
         String json = objectMapper.writeValueAsString(seeded);

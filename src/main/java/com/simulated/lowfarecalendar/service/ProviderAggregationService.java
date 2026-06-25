@@ -14,7 +14,6 @@ import io.vavr.control.Try;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,9 +84,8 @@ public class ProviderAggregationService {
             return Optional.empty();
         }
 
-        BigDecimal lowestPrice = quotes.stream()
-                .map(FareQuote::price)
-                .min(BigDecimal::compareTo)
+        FareQuote winner = quotes.stream()
+                .min((a, b) -> a.price().compareTo(b.price()))
                 .orElseThrow();
 
         List<String> respondingProviders = quotes.stream()
@@ -98,12 +96,12 @@ public class ProviderAggregationService {
                 .origin(query.origin())
                 .destination(query.destination())
                 .date(query.date().toString())
-                .lowestPrice(lowestPrice)
+                .lowestPrice(winner.price())
                 .currency("USD")
                 .updatedAt(Instant.now())
                 .respondingProviders(respondingProviders)
                 .providerCount(respondingProviders.size())
-                .stale(false)
+                .winningProvider(winner.providerId())
                 .build());
     }
 

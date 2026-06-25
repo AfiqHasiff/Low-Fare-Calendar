@@ -94,7 +94,9 @@ class CalendarServiceTest {
                 .lowestPrice(USD_PRICE)
                 .currency("USD")
                 .updatedAt(Instant.parse("2024-07-15T10:00:00Z"))
-                .stale(false)
+                .respondingProviders(List.of("providerA"))
+                .winningProvider("providerA")
+                .providerCount(1)
                 .build();
     }
 

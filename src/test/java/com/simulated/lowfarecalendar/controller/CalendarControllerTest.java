@@ -62,7 +62,7 @@ class CalendarControllerTest {
                                 .date("2024-07-01")
                                 .lowestPrice(new BigDecimal("199.00"))
                                 .available(true)
-                                .stale(false)
+                                .stale(false)  // stale is on DayPrice (response model), not CachedFareEntry
                                 .build()))
                 .generatedAt(Instant.parse("2024-07-15T10:30:00Z"))
                 .build();

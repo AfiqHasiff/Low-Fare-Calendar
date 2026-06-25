@@ -27,10 +27,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
-import java.util.stream.IntStream;
 
 @Service
 public class CalendarService {
+
+    // Carries a CachedFareEntry alongside whether it came from the fallback key.
+    private record ResolvedEntry(CachedFareEntry entry, boolean stale) {}
 
     private static final Logger log = LoggerFactory.getLogger(CalendarService.class);
 
@@ -80,7 +82,7 @@ public class CalendarService {
      */
     public CalendarResponse getCalendar(String origin, String dest,
                                         YearMonth month, String currency) {
-        log.debug("getCalendar origin={} dest={} month={} currency={}", origin, dest, month, currency);
+        // log.debug("getCalendar origin={} dest={} month={} currency={}", origin, dest, month, currency);
         // Fire-and-forget hot-route tracking so it does not add to response latency.
         virtualThreadExecutor.execute(() -> hotRouteTracker.increment(origin, dest, month));
 
@@ -88,7 +90,7 @@ public class CalendarService {
         List<Optional<CachedFareEntry>> cached = fareCacheService.pipelineGet(origin, dest, month);
 
         int daysInMonth = month.lengthOfMonth();
-        List<Optional<CachedFareEntry>> resolved = new ArrayList<>(daysInMonth);
+        List<Optional<ResolvedEntry>> resolved = new ArrayList<>(daysInMonth);
 
         for (int i = 0; i < daysInMonth; i++) {
             LocalDate date = month.atDay(i + 1);
@@ -101,7 +103,7 @@ public class CalendarService {
                 if (hitTrace != null) {
                     hitTrace.getCacheHitDates().add(date.toString());
                 }
-                resolved.add(entry);
+                resolved.add(Optional.of(new ResolvedEntry(entry.get(), false)));
             } else {
                 // log.debug("cache MISS {}-{}:{} — fetching from providers", origin, dest, date);
                 cacheMetricsService.recordCacheMiss(origin, dest);
@@ -151,10 +153,11 @@ public class CalendarService {
      *   - Lock acquired: aggregate from providers, write to cache, release lock.
      *   - Lock not acquired: another instance is fetching; poll Redis until result appears,
      *     then re-read from cache.
-     * On total provider failure the fallback key is returned with stale=true.
+     * On total provider failure the fallback key is read and flagged stale=true in ResolvedEntry.
+     * stale is never stored in Redis — it is a read-time signal only.
      */
-    private Optional<CachedFareEntry> resolveMissForDate(String origin, String dest,
-                                                          LocalDate date) {
+    private Optional<ResolvedEntry> resolveMissForDate(String origin, String dest,
+                                                        LocalDate date) {
         String singleflightKey = origin.toUpperCase() + ":" + dest.toUpperCase() + ":" + date;
         try {
             CachedFareEntry entry = singleflight.getOrFetch(singleflightKey, () -> {
@@ -173,20 +176,8 @@ public class CalendarService {
                             fareCacheService.set(origin, dest, date, aggregated.get());
                             return aggregated.get();
                         } else {
-                            // All providers failed — fall back to stale snapshot.
-                            return fareCacheService.getFallback(origin, dest, date)
-                                    .map(fb -> CachedFareEntry.builder()
-                                            .origin(fb.getOrigin())
-                                            .destination(fb.getDestination())
-                                            .date(fb.getDate())
-                                            .lowestPrice(fb.getLowestPrice())
-                                            .currency(fb.getCurrency())
-                                            .updatedAt(fb.getUpdatedAt())
-                                            .providerCount(fb.getProviderCount())
-                                            .respondingProviders(fb.getRespondingProviders())
-                                            .stale(true)
-                                            .build())
-                                    .orElse(null);
+                            // All providers failed — null signals the fallback path below.
+                            return null;
                         }
                     } finally {
                         cacheLockService.release(origin, dest, date, lockToken.get());
@@ -200,7 +191,13 @@ public class CalendarService {
                     return null;
                 }
             });
-            return Optional.ofNullable(entry);
+
+            if (entry != null) {
+                return Optional.of(new ResolvedEntry(entry, false));
+            }
+            // null from singleflight means providers failed — try the 24h fallback key.
+            return fareCacheService.getFallback(origin, dest, date)
+                    .map(fb -> new ResolvedEntry(fb, true));
         } catch (Exception e) {
             log.warn("resolveMissForDate failed for {}-{}:{}: {}",
                     origin, dest, date, e.getMessage());
@@ -209,24 +206,25 @@ public class CalendarService {
     }
 
     /**
-     * Convert a CachedFareEntry (USD) to a DayPrice in the requested currency.
+     * Convert a ResolvedEntry (USD) to a DayPrice in the requested currency.
      * Empty entry  -> available=false, lowestPrice=null, stale=false.
      * Present entry -> lowestPrice converted via the supplied CurrencyConverter.
+     *                  stale=true when the entry came from the 24h fallback key.
      */
     private DayPrice toDayPrice(LocalDate date,
-                                 Optional<CachedFareEntry> entry,
+                                 Optional<ResolvedEntry> resolved,
                                  CurrencyConverter converter) {
-        if (entry.isEmpty()) {
+        if (resolved.isEmpty()) {
             return new DayPrice(date.toString(), null, false, false);
         }
 
-        CachedFareEntry fareEntry = entry.get();
-        BigDecimal converted = converter.convert(fareEntry.getLowestPrice(), "USD", converter
+        ResolvedEntry r = resolved.get();
+        BigDecimal converted = converter.convert(r.entry().getLowestPrice(), "USD", converter
                 .supportedPairs()
                 .iterator()
                 .next()
                 .to());
 
-        return new DayPrice(date.toString(), converted, true, fareEntry.isStale());
+        return new DayPrice(date.toString(), converted, true, r.stale());
     }
 }

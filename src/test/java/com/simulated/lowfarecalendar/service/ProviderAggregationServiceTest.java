@@ -70,7 +70,8 @@ class ProviderAggregationServiceTest {
         assertThat(result.get().getRespondingProviders()).containsExactlyInAnyOrder("providerA", "providerB", "providerC");
         assertThat(result.get().getProviderCount()).isEqualTo(3);
         assertThat(result.get().getCurrency()).isEqualTo("USD");
-        assertThat(result.get().isStale()).isFalse();
+        assertThat(result.get().getWinningProvider()).isEqualTo("providerC");
+        assertThat(result.get().getLowestPrice()).isEqualByComparingTo(new BigDecimal("120.00"));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.simulated.lowfarecalendar.scheduler;
 
+import com.simulated.lowfarecalendar.cache.CacheLockService;
 import com.simulated.lowfarecalendar.cache.FareCacheService;
 import com.simulated.lowfarecalendar.cache.HotRouteTracker;
 import com.simulated.lowfarecalendar.config.LfcProperties;
@@ -28,6 +29,7 @@ import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class CacheWarmingSchedulerTest {
@@ -35,6 +37,7 @@ class CacheWarmingSchedulerTest {
     @Mock private HotRouteTracker hotRouteTracker;
     @Mock private FareCacheService fareCacheService;
     @Mock private ProviderAggregationService providerAggregationService;
+    @Mock private CacheLockService cacheLockService;
     @Mock private LfcProperties lfcProperties;
 
     @InjectMocks
@@ -63,6 +66,10 @@ class CacheWarmingSchedulerTest {
         when(lfcProperties.getCache()).thenReturn(cacheProps);
         when(lfcProperties.getHotRoutes()).thenReturn(hotRoutesProps);
         when(lfcProperties.getWarming()).thenReturn(warmingProps);
+
+        // Default: lock always acquired so warm path can proceed
+        lenient().when(cacheLockService.tryAcquire(anyString(), anyString(), any(LocalDate.class)))
+                .thenReturn(Optional.of("test-lock-token"));
     }
 
     // Test 1: getRemainingTtlSeconds returns 400 (> 600*0.5=300) -> aggregate NOT called
@@ -92,7 +99,7 @@ class CacheWarmingSchedulerTest {
                 .lowestPrice(new BigDecimal("199.00"))
                 .currency("USD")
                 .updatedAt(Instant.now())
-                .stale(false)
+                .winningProvider("providerA")
                 .build();
 
         when(providerAggregationService.aggregate(any(FlightQuery.class)))

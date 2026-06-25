@@ -25,7 +25,7 @@ GET /api/v1/flights/calendar
     ?origin=KUL
     &destination=SIN
     &month=2024-07
-    &currency=MYR        ← optional, defaults to USD
+    &currency=MYR        ← required; supported values: USD, MYR, THB
 ```
 
 **Sample response (condensed):**
@@ -36,11 +36,12 @@ GET /api/v1/flights/calendar
   "destination": "SIN",
   "month": "2024-07",
   "currency": "MYR",
-  "days": [
+  "calendar": [
     { "date": "2024-07-01", "lowestPrice": 224.05, "available": true,  "stale": false },
     { "date": "2024-07-02", "lowestPrice": null,   "available": false, "stale": false },
     { "date": "2024-07-15", "lowestPrice": 198.50, "available": true,  "stale": true  }
-  ]
+  ],
+  "generatedAt": "2024-07-10T08:32:11Z"
 }
 ```
 
@@ -256,11 +257,31 @@ Client A   Client B   Controller   CalendarSvc   Singleflight   CacheLock      P
 
 ```text
 SET lfc:v1:KUL:SIN:2024-07-15
-    {"lowestPrice":224.05,"available":true,"stale":false,"updatedAt":"2024-07-10T08:32:11Z"}
+    {
+      "origin": "KUL",
+      "destination": "SIN",
+      "date": "2024-07-15",
+      "lowestPrice": 198.50,
+      "currency": "USD",
+      "updatedAt": "2024-07-10T08:32:11Z",
+      "providerCount": 3,
+      "respondingProviders": ["providerA", "providerB", "providerC"],
+      "winningProvider": "providerC"
+    }
     PX 299520   ← primary key; 240s base + ~24.8% jitter = ~299.5s (hot route)
 
 SET lfc:v1:fallback:KUL:SIN:2024-07-15
-    {"lowestPrice":224.05,"available":true,"stale":false,"updatedAt":"2024-07-10T08:32:11Z"}
+    {
+      "origin": "KUL",
+      "destination": "SIN",
+      "date": "2024-07-15",
+      "lowestPrice": 198.50,
+      "currency": "USD",
+      "updatedAt": "2024-07-10T08:32:11Z",
+      "providerCount": 3,
+      "respondingProviders": ["providerA", "providerB", "providerC"],
+      "winningProvider": "providerC"
+    }
     PX 86400000  ← fallback key; 24h, never actively deleted
 ```
 
@@ -306,9 +327,13 @@ BookingSvc     Pub/Sub        SoldOutEventListener        Redis          Provide
 
 ```json
 {
+  "eventId": "a3f9c1b2-...",
   "origin": "KUL",
   "destination": "SIN",
   "date": "2024-07-15",
+  "priceClass": "Y",
+  "soldOutPrice": 198.50,
+  "currency": "USD",
   "generatedAt": "2024-07-10T08:32:11Z"
 }
 ```
@@ -497,21 +522,31 @@ lock:lfc:KUL:SIN:2024-07-15
 
 **What is actually stored inside a cache key (the payload):**
 
-Each primary and fallback key stores a JSON-serialised [`CachedFareEntry`](../src/main/java/com/simulated/lowfarecalendar/model/CachedFareEntry.java) object:
+Each primary and fallback key stores a JSON-serialised [`CachedFareEntry`](../src/main/java/com/simulated/lowfarecalendar/model/CachedFareEntry.java) object. This is the complete schema — nothing is omitted:
 
 ```json
 {
-  "lowestPrice": 224.05,
-  "available": true,
-  "stale": false,
-  "updatedAt": "2024-07-10T08:32:11Z"
+  "origin": "KUL",
+  "destination": "SIN",
+  "date": "2024-07-15",
+  "lowestPrice": 198.50,
+  "currency": "USD",
+  "updatedAt": "2024-07-10T08:32:11Z",
+  "providerCount": 3,
+  "respondingProviders": ["providerA", "providerB", "providerC"],
+  "winningProvider": "providerC"
 }
 ```
 
-- `lowestPrice` — the minimum USD price returned by providers at fetch time (always USD in Redis; currency conversion happens at response time, never stored)
-- `available` — false only when providers returned nothing and no fallback existed
-- `stale` — true only when this value came from the fallback key path (all providers failed)
-- `updatedAt` — the timestamp of when this entry was written; the fallback key's `updatedAt` is what the Lua idempotency script reads to compare against `event.generatedAt`
+- `origin` / `destination` / `date` — the cache key coordinates, also stored inside the payload so the object is self-describing without needing to parse the Redis key
+- `lowestPrice` — the minimum price across all responding providers at fetch time, **always in USD**; currency conversion is applied at response time and never written to Redis
+- `currency` — always `"USD"` in Redis; present for self-documentation
+- `updatedAt` — the authoritative write timestamp; for Pub/Sub-driven writes this is `event.generatedAt` (the booking-service timestamp, not Redis write time); for warmer-driven writes this is `Instant.now()` at fetch time; this is the field the Lua idempotency script compares against incoming `event.generatedAt`
+- `providerCount` — how many providers returned a successful quote during this fetch
+- `respondingProviders` — IDs of all providers that returned a successful quote (subset of all providers when a circuit breaker was open)
+- `winningProvider` — ID of the specific provider whose quote became `lowestPrice`; distinct from `respondingProviders` because multiple providers may respond but only one has the cheapest fare
+- `stale` — **not stored in Redis**; it is a read-time signal computed in `CalendarService`: `true` when an entry was read from the fallback key because all providers failed, `false` for all normally-cached entries
+- `available` — **not stored in Redis**; it is a derived field computed at response time in `CalendarService`: `true` when `lowestPrice != null`, `false` otherwise
 
 **Why prices are stored in USD, not the requested currency:** The requested currency is a query parameter that can differ per caller. Storing one value per currency per date would require N writes per cache entry (one for MYR, one for THB, one for USD). Storing USD once and converting on read means one write, unlimited currency support, and exchange rate changes require zero cache invalidation.
 

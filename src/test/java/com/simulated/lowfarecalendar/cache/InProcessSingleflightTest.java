@@ -34,7 +34,7 @@ class InProcessSingleflightTest {
                 .lowestPrice(new BigDecimal("150.00"))
                 .currency("USD")
                 .updatedAt(Instant.parse("2024-07-15T10:00:00Z"))
-                .stale(false)
+                .winningProvider("providerA")
                 .build();
     }
 
