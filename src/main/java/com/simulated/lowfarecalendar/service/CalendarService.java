@@ -4,7 +4,6 @@ import com.simulated.lowfarecalendar.cache.CacheLockService;
 import com.simulated.lowfarecalendar.cache.FareCacheService;
 import com.simulated.lowfarecalendar.cache.HotRouteTracker;
 import com.simulated.lowfarecalendar.cache.InProcessSingleflight;
-import com.simulated.lowfarecalendar.config.LfcProperties;
 import com.simulated.lowfarecalendar.currency.CurrencyConverter;
 import com.simulated.lowfarecalendar.currency.CurrencyConverterRegistry;
 import com.simulated.lowfarecalendar.model.CalendarResponse;
@@ -32,7 +31,8 @@ import java.util.concurrent.Executor;
 public class CalendarService {
 
     // Carries a CachedFareEntry alongside whether it came from the fallback key.
-    private record ResolvedEntry(CachedFareEntry entry, boolean stale) {}
+    private record ResolvedEntry(CachedFareEntry entry, boolean stale) {
+    }
 
     private static final Logger log = LoggerFactory.getLogger(CalendarService.class);
 
@@ -44,7 +44,6 @@ public class CalendarService {
     private final HotRouteTracker hotRouteTracker;
     private final CacheMetricsService cacheMetricsService;
     private final Executor virtualThreadExecutor;
-    private final LfcProperties lfcProperties;
     private final RequestTraceContext traceContext;
 
     public CalendarService(
@@ -56,7 +55,6 @@ public class CalendarService {
             HotRouteTracker hotRouteTracker,
             CacheMetricsService cacheMetricsService,
             @Qualifier("virtualThreadExecutor") Executor virtualThreadExecutor,
-            LfcProperties lfcProperties,
             RequestTraceContext traceContext) {
         this.fareCacheService = fareCacheService;
         this.singleflight = singleflight;
@@ -66,7 +64,6 @@ public class CalendarService {
         this.hotRouteTracker = hotRouteTracker;
         this.cacheMetricsService = cacheMetricsService;
         this.virtualThreadExecutor = virtualThreadExecutor;
-        this.lfcProperties = lfcProperties;
         this.traceContext = traceContext;
     }
 
@@ -81,8 +78,9 @@ public class CalendarService {
      * 5. Return a CalendarResponse.
      */
     public CalendarResponse getCalendar(String origin, String dest,
-                                        YearMonth month, String currency) {
-        // log.debug("getCalendar origin={} dest={} month={} currency={}", origin, dest, month, currency);
+            YearMonth month, String currency) {
+        long requestStart = System.currentTimeMillis();
+
         // Fire-and-forget hot-route tracking so it does not add to response latency.
         virtualThreadExecutor.execute(() -> hotRouteTracker.increment(origin, dest, month));
 
@@ -97,31 +95,25 @@ public class CalendarService {
             Optional<CachedFareEntry> entry = cached.get(i);
 
             if (entry.isPresent()) {
-                // log.debug("cache HIT  {}-{}:{}", origin, dest, date);
                 cacheMetricsService.recordCacheHit(origin, dest);
                 RequestTrace hitTrace = traceContext.current();
-                if (hitTrace != null) {
+                if (hitTrace != null)
                     hitTrace.getCacheHitDates().add(date.toString());
-                }
                 resolved.add(Optional.of(new ResolvedEntry(entry.get(), false)));
             } else {
-                // log.debug("cache MISS {}-{}:{} — fetching from providers", origin, dest, date);
                 cacheMetricsService.recordCacheMiss(origin, dest);
                 RequestTrace missTrace = traceContext.current();
-                if (missTrace != null) {
+                if (missTrace != null)
                     missTrace.getCacheMissDates().add(date.toString());
-                }
                 resolved.add(resolveMissForDate(origin, dest, date));
             }
         }
 
-        // Resolve currency converter once for the whole response.
         CurrencyConverter converter = currencyConverterRegistry.get("USD", currency);
 
         List<DayPrice> dayPrices = new ArrayList<>(daysInMonth);
         for (int i = 0; i < daysInMonth; i++) {
-            LocalDate date = month.atDay(i + 1);
-            dayPrices.add(toDayPrice(date, resolved.get(i), converter));
+            dayPrices.add(toDayPrice(month.atDay(i + 1), resolved.get(i), converter));
         }
 
         CalendarResponse response = new CalendarResponse(
@@ -132,14 +124,8 @@ public class CalendarService {
                 dayPrices,
                 Instant.now());
 
-        // Record currency info on the trace
-        RequestTrace currencyTrace = traceContext.current();
-        if (currencyTrace != null) {
-            RequestTrace.CurrencyInfo currencyInfo = currencyTrace.getCurrencyInfo();
-            currencyInfo.setRequestedCurrency(currency);
-            currencyInfo.setSourceCurrency("USD");
-            currencyInfo.setConversionActive(!currency.equals("USD"));
-        }
+        recordRequestMetrics(origin, dest, currency, resolved, dayPrices, requestStart);
+        updateTraceWithResponseData(origin, dest, currency, dayPrices);
 
         return response;
     }
@@ -150,14 +136,16 @@ public class CalendarService {
      * Uses InProcessSingleflight so that concurrent requests within the same JVM
      * for the same key coalesce into one fetch attempt. Inside the singleflight
      * boundary we attempt the distributed SETNX lock:
-     *   - Lock acquired: aggregate from providers, write to cache, release lock.
-     *   - Lock not acquired: another instance is fetching; poll Redis until result appears,
-     *     then re-read from cache.
-     * On total provider failure the fallback key is read and flagged stale=true in ResolvedEntry.
+     * - Lock acquired: aggregate from providers, write to cache, release lock.
+     * - Lock not acquired: another instance is fetching; poll Redis until result
+     * appears,
+     * then re-read from cache.
+     * On total provider failure the fallback key is read and flagged stale=true in
+     * ResolvedEntry.
      * stale is never stored in Redis — it is a read-time signal only.
      */
     private Optional<ResolvedEntry> resolveMissForDate(String origin, String dest,
-                                                        LocalDate date) {
+            LocalDate date) {
         String singleflightKey = origin.toUpperCase() + ":" + dest.toUpperCase() + ":" + date;
         try {
             CachedFareEntry entry = singleflight.getOrFetch(singleflightKey, () -> {
@@ -169,8 +157,7 @@ public class CalendarService {
                                 origin.toUpperCase(),
                                 dest.toUpperCase(),
                                 date);
-                        Optional<CachedFareEntry> aggregated =
-                                providerAggregationService.aggregate(query);
+                        Optional<CachedFareEntry> aggregated = providerAggregationService.aggregate(query);
 
                         if (aggregated.isPresent()) {
                             fareCacheService.set(origin, dest, date, aggregated.get());
@@ -207,13 +194,13 @@ public class CalendarService {
 
     /**
      * Convert a ResolvedEntry (USD) to a DayPrice in the requested currency.
-     * Empty entry  -> available=false, lowestPrice=null, stale=false.
+     * Empty entry -> available=false, lowestPrice=null, stale=false.
      * Present entry -> lowestPrice converted via the supplied CurrencyConverter.
-     *                  stale=true when the entry came from the 24h fallback key.
+     * stale=true when the entry came from the 24h fallback key.
      */
     private DayPrice toDayPrice(LocalDate date,
-                                 Optional<ResolvedEntry> resolved,
-                                 CurrencyConverter converter) {
+            Optional<ResolvedEntry> resolved,
+            CurrencyConverter converter) {
         if (resolved.isEmpty()) {
             return new DayPrice(date.toString(), null, false, false);
         }
@@ -226,5 +213,52 @@ public class CalendarService {
                 .to());
 
         return new DayPrice(date.toString(), converted, true, r.stale());
+    }
+
+    private void recordRequestMetrics(String origin, String dest, String currency,
+            List<Optional<ResolvedEntry>> resolved,
+            List<DayPrice> dayPrices, long requestStart) {
+        int staleCount = 0;
+        int unavailableCount = 0;
+        for (DayPrice dp : dayPrices) {
+            if (!dp.available())
+                unavailableCount++;
+            else if (dp.stale())
+                staleCount++;
+        }
+        for (int i = 0; i < staleCount; i++)
+            cacheMetricsService.recordStaleServed(origin, dest);
+        for (int i = 0; i < unavailableCount; i++)
+            cacheMetricsService.recordUnavailableDate(origin, dest);
+
+        RequestTrace trace = traceContext.current();
+        if (trace != null) {
+            int leaders = trace.getSummary().getSingleflightLeaderDates();
+            int followers = trace.getSummary().getSingleflightFollowerDates();
+            for (int i = 0; i < leaders; i++)
+                cacheMetricsService.recordSingleflightLeader(origin, dest);
+            for (int i = 0; i < followers; i++)
+                cacheMetricsService.recordSingleflightFollower(origin, dest);
+        }
+
+        int daysInMonth = resolved.size();
+        int hits = daysInMonth - (int) resolved.stream()
+                .filter(r -> r.isEmpty() || r.map(ResolvedEntry::stale).orElse(false)).count();
+        double hitRatio = daysInMonth > 0 ? (double) hits / daysInMonth : 0.0;
+        cacheMetricsService.recordRequestCacheHitRatio(origin, dest, hitRatio);
+
+        cacheMetricsService.recordRequestDuration(origin, dest, currency,
+                System.currentTimeMillis() - requestStart);
+    }
+
+    private void updateTraceWithResponseData(String origin, String dest, String currency,
+            List<DayPrice> dayPrices) {
+        RequestTrace trace = traceContext.current();
+        if (trace == null)
+            return;
+        RequestTrace.CurrencyInfo currencyInfo = trace.getCurrencyInfo();
+        currencyInfo.setRequestedCurrency(currency);
+        currencyInfo.setSourceCurrency("USD");
+        currencyInfo.setConversionActive(!currency.equals("USD"));
     }
 }

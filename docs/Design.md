@@ -11,6 +11,7 @@
 3. [Sequence Diagrams](#3-sequence-diagrams)
 4. [Component Reference](#4-component-reference)
 5. [Green Path vs Red Path](#5-green-path-vs-red-path)
+6. [Telemetry](#6-telemetry)
 
 ---
 
@@ -1056,3 +1057,157 @@ Pub/Sub re-delivers same event (at-least-once delivery)
 ```
 
 ---
+
+## 6. Telemetry
+
+The service exposes two complementary observability layers: **Prometheus metrics** (aggregate time-series, scraped by Prometheus, visualised in Grafana) and **per-request trace files** (per-request detail, written to `traces/`, for debugging individual slow or anomalous calls). They answer different questions — metrics tell you *something is wrong*, traces tell you *exactly what happened in that specific request*.
+
+---
+
+### Prometheus Metrics
+
+All metrics are exposed at `GET /actuator/prometheus` and are prefixed `lfc_`. Dots in metric names are converted to underscores automatically by Micrometer.
+
+**Source:** [`MeterRegistryCacheMetricsService`](../src/main/java/com/simulated/lowfarecalendar/observability/MeterRegistryCacheMetricsService.java) — Micrometer-backed implementation registered against Spring Boot's auto-configured `MeterRegistry` (Prometheus bridge). Services call the [`CacheMetricsService`](../src/main/java/com/simulated/lowfarecalendar/observability/CacheMetricsService.java) interface; the real implementation is injected at runtime.
+
+**Route tags:** When `lfc.observability.per-route-tags-enabled=true`, counters and timers carry `origin` and `dest` labels, enabling per-route breakdown in Grafana. Disable if label cardinality becomes a concern (many distinct routes = many label combinations in Prometheus).
+
+#### Full metric catalogue
+
+| Metric | Type | Tags | Recorded in | What it tells you |
+|---|---|---|---|---|
+| `lfc_cache_hits_total` | Counter | `origin`, `dest` | `CalendarService` | Number of dates served directly from the primary Redis key |
+| `lfc_cache_misses_total` | Counter | `origin`, `dest` | `CalendarService` | Number of dates that required a provider fetch or fallback read |
+| `lfc_cache_invalidations_total` | Counter | `origin`, `dest` | `SoldOutEventListener` | Cache evictions triggered by sold-out Pub/Sub events |
+| `lfc_cache_stale_served_total` | Counter | `origin`, `dest` | `CalendarService` | Dates served from the 24h fallback key because all providers failed — price is real but potentially hours old |
+| `lfc_dates_unavailable_total` | Counter | `origin`, `dest` | `CalendarService` | Dates returned with `available: false` — no cache, no providers, no fallback |
+| `lfc_request_duration_seconds` | Timer | `origin`, `dest`, `currency` | `CalendarService` | End-to-end wall-clock time for `getCalendar()` — the primary SLI for P50/P95/P99 latency panels and SLO alerts |
+| `lfc_request_cache_hit_ratio` | Distribution Summary | `origin`, `dest` | `CalendarService` | Per-request fraction of days served from cache (0.0–1.0). A value of 1.0 means all 31 dates were cache hits; 0.0 means a fully cold request |
+| `lfc_singleflight_leader_total` | Counter | `origin`, `dest` | `CalendarService` | Dates where this pod was elected the singleflight leader and executed the provider fetch |
+| `lfc_singleflight_follower_total` | Counter | `origin`, `dest` | `CalendarService` | Dates where this pod coalesced onto another thread's in-flight fetch — zero provider calls made |
+| `lfc_provider_latency_seconds` | Timer | `provider`, `outcome` | `ProviderAggregationService` | Per-provider call duration, broken down by `outcome=success` or `outcome=error` — includes count, sum, max, and percentiles |
+| `lfc_provider_errors_total` | Counter | `provider` | `ProviderAggregationService` | Provider exceptions (network errors, timeouts, bad responses) |
+| `lfc_cb_state` | Gauge | `provider` | `ProviderAggregationService` | Circuit breaker state per provider: `0`=CLOSED (healthy), `1`=OPEN (bypassed), `2`=HALF_OPEN (probing) |
+| `lfc_pubsub_events_total` | Counter | `outcome` | `SoldOutEventListener` | Pub/Sub events by outcome: `processed` (acted on), `stale_discarded` (duplicate/out-of-order), `error` |
+
+#### Instrument types
+
+**Counter** — monotonically increasing. Prometheus appends `_total`. Use `rate()` or `increase()` in queries; counters reset on pod restart and `rate()` handles resets automatically.
+
+```promql
+# Cache hit rate over last 5 minutes
+rate(lfc_cache_hits_total[5m]) /
+  (rate(lfc_cache_hits_total[5m]) + rate(lfc_cache_misses_total[5m]))
+```
+
+**Timer** — records count, sum, max, and percentile buckets. Prometheus exposes `_count`, `_sum`, `_max`, and `_bucket` suffixes. Units are always seconds.
+
+```promql
+# P99 request latency
+histogram_quantile(0.99, rate(lfc_request_duration_seconds_bucket[5m]))
+
+# P99 provider latency per provider
+histogram_quantile(0.99, rate(lfc_provider_latency_seconds_bucket[5m]))
+```
+
+**Gauge** — current value, can go up or down. Read directly.
+
+```promql
+# Alert when any provider circuit is open
+lfc_cb_state > 0
+```
+
+**Distribution Summary** — dimensionless histogram. Use `histogram_quantile` for percentiles.
+
+```promql
+# Median cache hit ratio across requests in the last 5 minutes
+histogram_quantile(0.50, rate(lfc_request_cache_hit_ratio_bucket[5m]))
+```
+
+#### Key Grafana panels and alert thresholds
+
+| Panel | PromQL | Alert threshold |
+|---|---|---|
+| Request rate | `rate(lfc_request_duration_seconds_count[1m])` | — |
+| P99 latency | `histogram_quantile(0.99, rate(lfc_request_duration_seconds_bucket[5m]))` | > 0.5s |
+| Cache hit rate | `rate(lfc_cache_hits_total[5m]) / (rate(lfc_cache_hits_total[5m]) + rate(lfc_cache_misses_total[5m]))` | < 0.90 |
+| Stale serve rate | `rate(lfc_cache_stale_served_total[5m])` | Sustained > 0 = provider degradation |
+| Unavailable dates | `rate(lfc_dates_unavailable_total[5m])` | > 0 = total provider failure for a date |
+| Circuit breaker open | `max(lfc_cb_state) > 0` | Any provider open |
+| Singleflight coalescing ratio | `rate(lfc_singleflight_follower_total[5m]) / rate(lfc_singleflight_leader_total[5m])` | Informational — high ratio means thundering herd protection is absorbing traffic effectively |
+
+**Note:** Prometheus metrics live in JVM memory and reset to zero on pod restart. The reset appears as a drop in Grafana — expected and normal. Always use `rate()` over raw counter values.
+
+---
+
+### Per-Request Trace Files
+
+**Source:** [`RequestTraceContext`](../src/main/java/com/simulated/lowfarecalendar/trace/RequestTraceContext.java) + [`RequestTraceWriter`](../src/main/java/com/simulated/lowfarecalendar/trace/RequestTraceWriter.java)  
+**Location:** `traces/` directory, one JSON file per request  
+**Toggle:** `lfc.tracing.enabled=true` in `application.yml` (disable in production to avoid disk I/O on every request)  
+**Filename format:** `{Long.MAX_VALUE - epochSeconds}-{ORIGIN}-{DEST}-{YYYY-MM}-{requestId[0..7]}.json` — inverted epoch prefix so newest files sort to the top of a directory listing
+
+A trace file captures the complete lifecycle of one calendar request:
+
+```json
+{
+  "requestId": "21121629-a8af-4f6c-a052-737fc25d2fe3",
+  "requestedAt": "2026-06-27T08:35:17Z",
+  "origin": "KUL",
+  "destination": "SIN",
+  "month": "2026-07",
+  "currency": "MYR",
+  "summary": {
+    "totalDays": 31,
+    "cacheHits": 31,
+    "cacheMisses": 0,
+    "staleFromFallback": 0,
+    "unavailableDays": 0,
+    "singleflightLeaderDates": 0,
+    "singleflightFollowerDates": 0
+  },
+  "cacheHitDates": ["2026-07-01", "2026-07-02", "..."],
+  "cacheMissDates": [],
+  "providerResults": {},
+  "providerFailures": [],
+  "staleDates": [],
+  "unavailableDates": [],
+  "currencyInfo": {
+    "requestedCurrency": "MYR",
+    "sourceCurrency": "USD",
+    "conversionActive": true,
+    "sampleRate": "1 USD = 4.47 MYR"
+  },
+  "thunderingHerdObserved": false
+}
+```
+
+**Field reference:**
+
+| Field | What it tells you |
+|---|---|
+| `summary.cacheHits` / `totalDays` | How many of the 31 dates were served from Redis vs. fetched from providers |
+| `summary.staleFromFallback` | How many dates used the 24h fallback key — non-zero means providers were down for those dates |
+| `summary.unavailableDays` | Dates with no data at all — no cache, no providers, no fallback |
+| `summary.singleflightLeaderDates` | Dates this pod executed the provider fetch for |
+| `summary.singleflightFollowerDates` | Dates this pod coalesced onto another thread — if > 0, `thunderingHerdObserved: true` |
+| `cacheHitDates` / `cacheMissDates` | Exact list of which dates hit or missed — useful for debugging partial-month miss patterns |
+| `providerResults` | Per-date map of which providers responded, what price they quoted, and their latency in ms |
+| `providerFailures` | Provider calls that failed, with `failureReason` (`CIRCUIT_OPEN` or `EXCEPTION`) |
+| `staleDates` | Exact dates served from the fallback key |
+| `unavailableDates` | Exact dates that returned `available: false` |
+| `currencyInfo` | Currency conversion applied and the exchange rate used for this request |
+| `thunderingHerdObserved` | `true` if any date had a singleflight follower — in-JVM coalescing was triggered |
+
+**Trace vs. Prometheus — when to use each:**
+
+| Question | Use |
+|---|---|
+| Is P99 latency above SLO right now? | Prometheus / Grafana |
+| Which provider is slow or down? | Prometheus `lfc_provider_latency_seconds` |
+| Why was this specific request slow? | Trace file — check `providerResults` latencies per date |
+| Which dates missed cache on this request? | Trace file — check `cacheMissDates` |
+| Is the warmer keeping the cache warm? | Prometheus `lfc_request_cache_hit_ratio` |
+| Did thundering herd protection activate? | Trace `thunderingHerdObserved`, or Prometheus `lfc_singleflight_follower_total` rate |
+| Is a provider's circuit breaker open? | Prometheus `lfc_cb_state > 0` |
+| What price did each provider quote for a date? | Trace file `providerResults` |

@@ -4,13 +4,11 @@ import com.simulated.lowfarecalendar.cache.CacheLockService;
 import com.simulated.lowfarecalendar.cache.FareCacheService;
 import com.simulated.lowfarecalendar.cache.HotRouteTracker;
 import com.simulated.lowfarecalendar.cache.InProcessSingleflight;
-import com.simulated.lowfarecalendar.config.LfcProperties;
 import com.simulated.lowfarecalendar.currency.CurrencyConverter;
 import com.simulated.lowfarecalendar.currency.CurrencyConverterRegistry;
 import com.simulated.lowfarecalendar.model.CalendarResponse;
 import com.simulated.lowfarecalendar.model.CachedFareEntry;
 import com.simulated.lowfarecalendar.model.CurrencyPair;
-import com.simulated.lowfarecalendar.model.DayPrice;
 import com.simulated.lowfarecalendar.model.FlightQuery;
 import com.simulated.lowfarecalendar.observability.CacheMetricsService;
 import com.simulated.lowfarecalendar.trace.RequestTraceContext;
@@ -52,7 +50,6 @@ class CalendarServiceTest {
     @Mock private HotRouteTracker hotRouteTracker;
     @Mock private CacheMetricsService cacheMetricsService;
     @Mock private Executor virtualThreadExecutor;
-    @Mock private LfcProperties lfcProperties;
     @Mock private RequestTraceContext traceContext;
     @Mock private CurrencyConverter myrConverter;
 
@@ -101,7 +98,7 @@ class CalendarServiceTest {
     }
 
     /**
-     * Test 1: All 31 days cached — no aggregation called, all DayPrices
+     * Test 1: All 31 days cached,— no aggregation called, all DayPrices
      * in MYR (100 USD * 4.47 = 447.00).
      */
     @Test
@@ -123,7 +120,7 @@ class CalendarServiceTest {
     }
 
     /**
-     * Test 2: 30 hits + 1 miss — aggregation called exactly once for the missing date.
+     * Test 2: 30 hits + 1 mis, — aggregation called exactly once for the missing date.
      */
     @Test
     void thirtyHitsOneMiss_aggregationCalledOnce() {
